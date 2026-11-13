@@ -1,0 +1,119 @@
+# Minigres lab: one primary, two streaming replicas (Postgres 18).
+#
+# Data lives in EXTERNAL volumes, so `docker compose down` and even `down -v`
+# leave it alone. Create them first with `make lab-volumes`; wipe them only
+# with `make lab-reset`.
+#
+# Host ports are bound to 127.0.0.1 only. Reach them from your laptop with an
+# SSH tunnel, never by publishing on 0.0.0.0 (Docker's iptables rules bypass ufw).
+
+name: minigres-lab
+
+x-pg-common: &pg-common
+  image: postgres:18
+  environment: &pg-env
+    # Postgres 18 image: PGDATA moved under a version directory, and the volume
+    # is mounted at /var/lib/postgresql. Set explicitly so the replica script
+    # and the image agree.
+    PGDATA: /var/lib/postgresql/18/docker
+  networks: [lab]
+  restart: unless-stopped
+
+services:
+  pg-primary:
+    <<: *pg-common
+    container_name: pg-primary
+    hostname: pg-primary
+    environment:
+      <<: *pg-env
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in lab/.env}
+      REPLICATION_PASSWORD: ${REPLICATION_PASSWORD:?set REPLICATION_PASSWORD in lab/.env}
+      LAB_SUBNET: ${LAB_SUBNET:-172.28.0.0/24}
+    command:
+      - postgres
+      - -c
+      - wal_level=logical          # logical decoding is needed in stage 4
+      - -c
+      - max_wal_senders=10
+      - -c
+      - max_replication_slots=10
+      - -c
+      - hot_standby=on             # copied to replicas by pg_basebackup
+      - -c
+      - wal_keep_size=1GB          # lets a stopped replica catch up (no slots yet)
+    volumes:
+      - pg-primary-data:/var/lib/postgresql
+      - ./primary/init:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      # TCP check: during first-boot init the image's temporary server listens
+      # on the unix socket only, so this passes only once the real server is up
+      # (and the replication role exists).
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
+
+  pg-replica1:
+    <<: *pg-common
+    container_name: pg-replica1
+    hostname: pg-replica1
+    environment:
+      <<: *pg-env
+      REPLICATION_PASSWORD: ${REPLICATION_PASSWORD:?set REPLICATION_PASSWORD in lab/.env}
+      PRIMARY_HOST: pg-primary
+    entrypoint: ["bash", "/scripts/replica-entrypoint.sh"]
+    command: ["postgres"]
+    volumes:
+      - pg-replica1-data:/var/lib/postgresql
+      - ./scripts:/scripts:ro
+    ports:
+      - "127.0.0.1:5433:5432"
+    depends_on:
+      pg-primary:
+        condition: service_healthy
+    healthcheck: &replica-health
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 30s
+
+  pg-replica2:
+    <<: *pg-common
+    container_name: pg-replica2
+    hostname: pg-replica2
+    environment:
+      <<: *pg-env
+      REPLICATION_PASSWORD: ${REPLICATION_PASSWORD:?set REPLICATION_PASSWORD in lab/.env}
+      PRIMARY_HOST: pg-primary
+    entrypoint: ["bash", "/scripts/replica-entrypoint.sh"]
+    command: ["postgres"]
+    volumes:
+      - pg-replica2-data:/var/lib/postgresql
+      - ./scripts:/scripts:ro
+    ports:
+      - "127.0.0.1:5434:5432"
+    depends_on:
+      pg-primary:
+        condition: service_healthy
+    healthcheck: *replica-health
+
+networks:
+  lab:
+    ipam:
+      config:
+        - subnet: ${LAB_SUBNET:-172.28.0.0/24}
+
+volumes:
+  pg-primary-data:
+    external: true
+    name: minigres-pg-primary
+  pg-replica1-data:
+    external: true
+    name: minigres-pg-replica1
+  pg-replica2-data:
+    external: true
+    name: minigres-pg-replica2
