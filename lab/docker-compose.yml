@@ -65,7 +65,9 @@ services:
       REPLICATION_PASSWORD: ${REPLICATION_PASSWORD:?set REPLICATION_PASSWORD in lab/.env}
       PRIMARY_HOST: pg-primary
     entrypoint: ["bash", "/scripts/replica-entrypoint.sh"]
-    command: ["postgres"]
+    # cluster_name becomes the walreceiver's application_name on the primary
+    # (pg_stat_replication, synchronous_standby_names).
+    command: ["postgres", "-c", "cluster_name=pg-replica1"]
     volumes:
       - pg-replica1-data:/var/lib/postgresql
       - ./scripts:/scripts:ro
@@ -90,7 +92,7 @@ services:
       REPLICATION_PASSWORD: ${REPLICATION_PASSWORD:?set REPLICATION_PASSWORD in lab/.env}
       PRIMARY_HOST: pg-primary
     entrypoint: ["bash", "/scripts/replica-entrypoint.sh"]
-    command: ["postgres"]
+    command: ["postgres", "-c", "cluster_name=pg-replica2"]
     volumes:
       - pg-replica2-data:/var/lib/postgresql
       - ./scripts:/scripts:ro
