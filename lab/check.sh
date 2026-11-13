@@ -17,7 +17,8 @@ ok()   { echo "ok:   $*"; }
 # ON_ERROR_STOP makes psql exit non-zero on SQL errors.
 sql() {
   local container="$1" query="$2"
-  docker exec "$container" psql -U postgres -d postgres -X -v ON_ERROR_STOP=1 -tAc "$query"
+  # client_min_messages=warning hides NOTICEs such as "already exists, skipping".
+  docker exec -e PGOPTIONS="-c client_min_messages=warning" "$container" psql -U postgres -d postgres -X -v ON_ERROR_STOP=1 -tAc "$query"
 }
 
 # 1. Roles: the primary must be a primary, the replicas must be in recovery.
@@ -59,7 +60,9 @@ for r in "${REPLICAS[@]}"; do
       || fail "$r did not show $token within ${TIMEOUT}s"
     sleep 0.1
   done
-  ok "$r has the row after $(( ($(date +%s%N) - start_ns) / 1000000 )) ms"
+  # Upper bound only: includes docker exec + psql startup on every poll,
+  # which dominates. This is NOT replication lag (see pg_stat_replication.replay_lag).
+  ok "$r has the row (seen within $(( ($(date +%s%N) - start_ns) / 1000000 )) ms, incl. docker exec overhead)"
 done
 
 echo "PASS"
