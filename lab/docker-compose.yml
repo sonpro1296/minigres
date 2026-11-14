@@ -4,8 +4,10 @@
 # leave it alone. Create them first with `make lab-volumes`; wipe them only
 # with `make lab-reset`.
 #
-# Host ports are bound to 127.0.0.1 only. Reach them from your laptop with an
-# SSH tunnel, never by publishing on 0.0.0.0 (Docker's iptables rules bypass ufw).
+# Host ports bind to LAB_BIND_IP (default 127.0.0.1, reach via SSH tunnel).
+# Setting LAB_BIND_IP=0.0.0.0 in lab/.env exposes Postgres to every network the
+# host is on; then the cloud firewall is the only filter, because Docker's
+# iptables rules bypass ufw. See PROGRESS.md (2026-11-14 decision).
 
 name: minigres-lab
 
@@ -45,7 +47,7 @@ services:
       - pg-primary-data:/var/lib/postgresql
       - ./primary/init:/docker-entrypoint-initdb.d:ro
     ports:
-      - "127.0.0.1:5432:5432"
+      - "${LAB_BIND_IP:-127.0.0.1}:5432:5432"
     healthcheck:
       # TCP check: during first-boot init the image's temporary server listens
       # on the unix socket only, so this passes only once the real server is up
@@ -72,7 +74,7 @@ services:
       - pg-replica1-data:/var/lib/postgresql
       - ./scripts:/scripts:ro
     ports:
-      - "127.0.0.1:5433:5432"
+      - "${LAB_BIND_IP:-127.0.0.1}:5433:5432"
     depends_on:
       pg-primary:
         condition: service_healthy
@@ -97,7 +99,7 @@ services:
       - pg-replica2-data:/var/lib/postgresql
       - ./scripts:/scripts:ro
     ports:
-      - "127.0.0.1:5434:5432"
+      - "${LAB_BIND_IP:-127.0.0.1}:5434:5432"
     depends_on:
       pg-primary:
         condition: service_healthy
